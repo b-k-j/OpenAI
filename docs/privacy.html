@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>개인정보처리방침</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+         max-width: 720px; margin: 0 auto; padding: 32px 16px; line-height: 1.7; }
+  h1 { font-size: 1.6rem; } h2 { font-size: 1.15rem; margin-top: 2em; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+<h1>개인정보처리방침 (Privacy Policy)</h1>
+<p>시행일: 2026년 11월 2일</p>
+
+<h2>1. 이 앱은 무엇인가요</h2>
+<p>"YouTube 자동 업로더"(이하 "앱")는 저장소 소유자 한 사람이 자신의 YouTube 채널에 영상을 올리기 위해 만든 개인용 도구입니다.
+앱은 다른 사용자를 받지 않으며, 소유자 본인의 Google 계정으로만 사용됩니다.</p>
+
+<h2>2. 접근하는 정보</h2>
+<p>앱은 사용자가 허용한 Google 권한으로 다음 작업만 합니다.</p>
+<ul>
+  <li><strong>YouTube</strong> (youtube.upload, youtube): 본인 채널에 영상 업로드, 썸네일 설정, 재생목록에 영상 추가</li>
+  <li><strong>Google Drive</strong> (drive): 사용자가 지정한 폴더의 영상, 썸네일, 설정 파일과 스프레드시트를 읽고, 처리한 파일을 지정한 다른 폴더로 옮기며, 업로드 결과 기록 파일을 그 폴더에 저장</li>
+</ul>
+<p>앱은 지정한 폴더 밖의 파일이나 다른 개인정보를 읽지 않습니다.</p>
+
+<h2>3. 저장과 보관</h2>
+<ul>
+  <li>로그인 정보(OAuth 리프레시 토큰)는 소유자의 GitHub 저장소 암호화 비밀값(Secrets)에만 저장됩니다.</li>
+  <li>영상 파일은 업로드하는 동안에만 GitHub Actions 실행 환경에 임시로 내려받고, 실행이 끝나면 그 환경과 함께 삭제됩니다.</li>
+  <li>앱은 별도의 서버나 데이터베이스를 운영하지 않습니다.</li>
+</ul>
+
+<h2>4. 제공과 공유</h2>
+<p>앱은 Google 사용자 데이터를 판매하거나 제3자와 공유하지 않으며, 광고나 AI 모델 학습에 사용하지 않습니다.
+데이터는 위 2번에 적은 업로드 작업에만 사용합니다.</p>
+<p>이 앱이 Google API로 받은 정보를 사용하고 다른 앱으로 전송하는 방식은
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API 서비스 사용자 데이터 정책</a>(제한적 사용 요구사항 포함)을 따릅니다.</p>
+
+<h2>5. 권한 철회</h2>
+<p><a href="https://myaccount.google.com/permissions">Google 계정 → 보안 → 서드 파티 액세스</a>에서 언제든 이 앱의 권한을 삭제할 수 있습니다.
+삭제하면 앱은 더 이상 계정에 접근할 수 없습니다.</p>
+
+<h2>6. 문의</h2>
+<p><a href="https://github.com/b-k-j/OpenAI/issues">GitHub 저장소 Issues</a>로 문의해 주세요.</p>
+
+<hr>
+<h2>English summary</h2>
+<p>This is a personal, single-user tool that uploads videos from the owner's designated Google Drive folders to the owner's own YouTube channel.
+It uses the YouTube scopes (youtube.upload, youtube) to upload videos, set thumbnails and add videos to playlists, and the Drive scope (drive) only to read,
+move and write files in the folders the owner designates. The OAuth refresh token is stored only in the owner's encrypted GitHub repository secrets.
+Video files are held temporarily in the GitHub Actions runner during upload and deleted with it. No user data is sold, shared with third parties,
+or used for advertising or AI training. Use of information received from Google APIs adheres to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.
+Access can be revoked at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+Contact: <a href="https://github.com/b-k-j/OpenAI/issues">GitHub Issues</a>.</p>
+</body>
+</html>
