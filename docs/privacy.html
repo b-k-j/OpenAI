@@ -28,6 +28,11 @@
 </ul>
 <p>앱은 지정한 폴더 밖의 파일이나 다른 개인정보를 읽지 않습니다.</p>
 
+<h2>YouTube API 서비스 사용</h2>
+<p>앱은 <strong>YouTube API 서비스</strong>를 사용합니다. 앱을 사용하면 <a href="https://www.youtube.com/t/terms">YouTube 서비스 약관</a>에 동의하는 것으로 봅니다.
+YouTube API 서비스로 처리되는 정보에는 <a href="https://policies.google.com/privacy">Google 개인정보처리방침</a>이 적용됩니다.</p>
+<p>앱은 사용자의 기기에 쿠키 등 정보를 저장하거나 읽지 않습니다.</p>
+
 <h2>3. 저장과 보관</h2>
 <ul>
   <li>로그인 정보(OAuth 리프레시 토큰)는 소유자의 GitHub 저장소 암호화 비밀값(Secrets)에만 저장됩니다.</li>
@@ -41,8 +46,9 @@
 <p>이 앱이 Google API로 받은 정보를 사용하고 다른 앱으로 전송하는 방식은
 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API 서비스 사용자 데이터 정책</a>(제한적 사용 요구사항 포함)을 따릅니다.</p>
 
-<h2>5. 권한 철회</h2>
-<p><a href="https://myaccount.google.com/permissions">Google 계정 → 보안 → 서드 파티 액세스</a>에서 언제든 이 앱의 권한을 삭제할 수 있습니다.
+<h2>5. 권한 철회와 데이터 삭제</h2>
+<p><a href="https://security.google.com/settings/security/permissions">Google 보안 설정 → 서드 파티 액세스</a>에서 언제든 이 앱의 권한을 삭제할 수 있습니다.
+권한을 삭제하거나 GitHub 저장소의 비밀값을 지우면 앱이 보관하던 인증 정보도 더 이상 쓸 수 없게 됩니다.
 삭제하면 앱은 더 이상 계정에 접근할 수 없습니다.</p>
 
 <h2>6. 문의</h2>
@@ -50,13 +56,17 @@
 
 <hr>
 <h2>English summary</h2>
+<p>This app uses <strong>YouTube API Services</strong>. By using the app, you agree to be bound by the
+<a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>, and the
+<a href="https://policies.google.com/privacy">Google Privacy Policy</a> applies to information processed through YouTube API Services.
+The app does not store or access cookies or other information on your device.</p>
 <p>This is a personal, single-user tool that uploads videos from the owner's designated Google Drive folders to the owner's own YouTube channel.
 It uses the YouTube scopes (youtube.upload, youtube) to upload videos, set thumbnails and add videos to playlists, and the Drive scope (drive) only to read,
 move and write files in the folders the owner designates. The OAuth refresh token is stored only in the owner's encrypted GitHub repository secrets.
 Video files are held temporarily in the GitHub Actions runner during upload and deleted with it. No user data is sold, shared with third parties,
 or used for advertising or AI training. Use of information received from Google APIs adheres to the
 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.
-Access can be revoked at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+Access can be revoked at any time via the <a href="https://security.google.com/settings/security/permissions">Google security settings page</a>.
 Contact: <a href="https://github.com/b-k-j/OpenAI/issues">GitHub Issues</a>.</p>
 </body>
 </html>
