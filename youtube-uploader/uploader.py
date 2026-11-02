@@ -8,17 +8,23 @@
     python uploader.py check    # 업로드 없이 메타데이터만 검사
     python uploader.py once     # 대기 중인 영상을 한 번 업로드
     python uploader.py watch    # 폴더를 계속 감시하며 업로드
+    python uploader.py drive    # Google Drive 폴더의 영상을 업로드 (GitHub Actions용)
 """
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import logging
+import os
 import random
+import re
 import shutil
 import sys
+import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -31,7 +37,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",  # 재생목록 추가에 필요
 ]
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"  # drive 모드: 파일을 읽고 폴더를 옮기는 데 필요
+TOKEN_URI = "https://oauth2.googleapis.com/token"
 PRIVACY_VALUES = {"private", "unlisted", "public"}
+PRIVACY_ALIASES = {"비공개": "private", "일부공개": "unlisted", "링크공개": "unlisted", "공개": "public"}
 RETRIABLE_STATUS = {500, 502, 503, 504}
 QUOTA_REASONS = {"quotaExceeded", "uploadLimitExceeded", "dailyLimitExceeded", "rateLimitExceeded"}
 MAX_RETRIES = 8
@@ -165,7 +174,8 @@ def load_metadata(video: Path, defaults: dict, now: datetime | None = None) -> d
         raise ValueError(f"태그 전체 길이는 500자 이하여야 합니다 (현재 {total}자).")
     meta["tags"] = tags
 
-    privacy = str(meta.get("privacyStatus") or "private").lower()
+    privacy = str(meta.get("privacyStatus") or "private").strip().lower()
+    privacy = PRIVACY_ALIASES.get(privacy.replace(" ", ""), privacy)
     if privacy not in PRIVACY_VALUES:
         raise ValueError(f"privacyStatus 는 {sorted(PRIVACY_VALUES)} 중 하나여야 합니다.")
     meta["privacyStatus"] = privacy
@@ -179,8 +189,14 @@ def load_metadata(video: Path, defaults: dict, now: datetime | None = None) -> d
         meta.pop("publishAt", None)
 
     meta["categoryId"] = str(meta.get("categoryId") or "22")
-    meta["madeForKids"] = bool(meta.get("madeForKids", False))
+    meta["madeForKids"] = _truthy(meta.get("madeForKids", False))
     return meta
+
+
+def _truthy(v) -> bool:
+    if isinstance(v, str):
+        return v.strip().lower() in {"1", "true", "yes", "y", "o", "예", "네", "아동용"}
+    return bool(v)
 
 
 def build_body(meta: dict) -> dict:
@@ -277,12 +293,17 @@ def _record(dest_dir: Path, video: Path, data: dict, suffix: str) -> Path:
 
 
 UploadFn = Callable[[Path, dict, "Path | None"], str]
+# (영상 경로, "uploaded" 또는 "failed", 결과/오류 기록 파일) - 영상 하나를 처리할 때마다 호출
+ResultFn = Callable[[Path, str, Path], None]
 
 
-def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False) -> dict:
+def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False,
+             stable_seconds: float | None = None, on_result: ResultFn | None = None) -> dict:
     """대기 중인 영상을 처리합니다. 결과 개수를 돌려줍니다."""
     stats = {"uploaded": 0, "failed": 0, "checked": 0, "deferred": 0}
-    videos = pending_videos(cfg.watch_dir, 0 if dry_run else cfg.stable_seconds)
+    if stable_seconds is None:
+        stable_seconds = 0 if dry_run else cfg.stable_seconds
+    videos = pending_videos(cfg.watch_dir, stable_seconds)
     for video in videos:
         try:
             meta = load_metadata(video, cfg.defaults)
@@ -290,7 +311,9 @@ def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False) -> 
         except ValueError as e:
             log.error("%s: %s", video.name, e)
             if not dry_run:
-                _fail(cfg, video, str(e))
+                rec = _fail(cfg, video, str(e))
+                if on_result:
+                    on_result(video, "failed", rec)
             stats["failed"] += 1
             continue
 
@@ -311,7 +334,9 @@ def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False) -> 
             break
         except Exception as e:  # noqa: BLE001 - 어떤 오류든 실패 폴더로 보냅니다
             log.exception("%s 업로드 실패", video.name)
-            _fail(cfg, video, f"{type(e).__name__}: {e}", meta)
+            rec = _fail(cfg, video, f"{type(e).__name__}: {e}", meta)
+            if on_result:
+                on_result(video, "failed", rec)
             stats["failed"] += 1
             continue
 
@@ -319,7 +344,7 @@ def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False) -> 
         files = companion_files(video, meta)
         for f in files:
             move_unique(f, cfg.uploaded_dir)
-        _record(cfg.uploaded_dir, video, {
+        rec = _record(cfg.uploaded_dir, video, {
             "videoId": video_id,
             "url": url,
             "title": meta["title"],
@@ -330,26 +355,52 @@ def run_once(cfg: Config, upload_fn: UploadFn | None, dry_run: bool = False) -> 
         log.info("업로드 완료: %s -> %s%s", video.name, url,
                  f" (예약 공개 {meta['publishAt']})" if meta.get("publishAt") else "")
         stats["uploaded"] += 1
+        if on_result:
+            on_result(video, "uploaded", rec)
     return stats
 
 
-def _fail(cfg: Config, video: Path, reason: str, meta: dict | None = None) -> None:
+def _fail(cfg: Config, video: Path, reason: str, meta: dict | None = None) -> Path:
     for f in companion_files(video, meta):
         move_unique(f, cfg.failed_dir)
-    _record(cfg.failed_dir, video, {"error": reason}, ".error.json")
+    return _record(cfg.failed_dir, video, {"error": reason}, ".error.json")
 
 
 # ---------------------------------------------------------------- YouTube API
 
-def get_service(cfg: Config, open_browser: bool = True):
+def get_credentials(cfg: Config, scopes: list[str], open_browser: bool = True):
+    """인증 정보를 가져옵니다.
+
+    환경 변수 YT_REFRESH_TOKEN 이 있으면 그것을 씁니다 (GitHub Actions 등 서버용).
+    없으면 client_secret.json / token.json 으로 브라우저 로그인을 합니다 (PC용).
+    """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
+
+    if os.environ.get("YT_REFRESH_TOKEN"):
+        missing = [k for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET") if not os.environ.get(k)]
+        if missing:
+            raise SystemExit(f"환경 변수가 없습니다: {', '.join(missing)}")
+        creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri=TOKEN_URI,
+                            client_id=os.environ["YT_CLIENT_ID"].strip(),
+                            client_secret=os.environ["YT_CLIENT_SECRET"].strip())
+        try:
+            creds.refresh(Request())
+        except Exception as e:  # noqa: BLE001
+            raise SystemExit(
+                f"리프레시 토큰으로 로그인하지 못했습니다: {e}\n"
+                "토큰이 만료되었거나(OAuth 동의 화면이 '테스트' 상태면 7일 후 만료) 값이 잘못되었습니다. "
+                "README의 '리프레시 토큰 받기'를 다시 해 주세요.") from e
+        return creds
+
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
 
     creds = None
     if cfg.token_file.exists():
-        creds = Credentials.from_authorized_user_file(str(cfg.token_file), SCOPES)
+        creds = Credentials.from_authorized_user_file(str(cfg.token_file), scopes)
+        if not creds.has_scopes(scopes):
+            log.info("저장된 토큰에 필요한 권한이 없어 다시 로그인합니다.")
+            creds = None
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -358,14 +409,19 @@ def get_service(cfg: Config, open_browser: bool = True):
                 raise SystemExit(
                     f"OAuth 클라이언트 파일이 없습니다: {cfg.client_secrets}\n"
                     "README의 'Google Cloud 설정'을 따라 client_secret.json을 받아 두세요.")
-            flow = InstalledAppFlow.from_client_secrets_file(str(cfg.client_secrets), SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(str(cfg.client_secrets), scopes)
             creds = flow.run_local_server(port=0, open_browser=open_browser)
         cfg.token_file.write_text(creds.to_json(), encoding="utf-8")
         try:
             cfg.token_file.chmod(0o600)
         except OSError:
             pass
-    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+    return creds
+
+
+def build_service(name: str, version: str, creds):
+    from googleapiclient.discovery import build
+    return build(name, version, credentials=creds, cache_discovery=False)
 
 
 def _http_reason(err) -> str:
@@ -439,15 +495,205 @@ def make_youtube_uploader(youtube) -> UploadFn:
     return upload
 
 
+# ---------------------------------------------------------------- Google Drive 모드
+# iPad처럼 PC가 없는 환경용: Drive 폴더에 영상을 올려 두면 GitHub Actions가 가져가 업로드합니다.
+
+FOLDER_URL_RE = re.compile(r"(?:folders/|[?&]id=)([A-Za-z0-9_-]{10,})")
+
+
+def folder_id(value: str) -> str:
+    """Drive 폴더 링크나 ID에서 ID만 꺼냅니다."""
+    value = (value or "").strip()
+    m = FOLDER_URL_RE.search(value)
+    return m.group(1) if m else value
+
+
+SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+SHEET_COLUMNS = {
+    "파일": "file", "파일명": "file", "file": "file", "filename": "file",
+    "제목": "title", "title": "title",
+    "설명": "description", "description": "description",
+    "태그": "tags", "tags": "tags",
+    "공개": "privacyStatus", "공개범위": "privacyStatus", "공개상태": "privacyStatus", "privacystatus": "privacyStatus",
+    "예약": "publishAt", "예약공개": "publishAt", "공개시간": "publishAt", "publishat": "publishAt",
+    "재생목록": "playlistId", "playlistid": "playlistId",
+    "카테고리": "categoryId", "categoryid": "categoryId",
+    "썸네일": "thumbnail", "thumbnail": "thumbnail",
+    "아동용": "madeForKids", "madeforkids": "madeForKids",
+}
+
+
+def parse_sheet_csv(text: str) -> dict[str, dict]:
+    """스프레드시트(CSV)의 각 행을 {파일 이름(소문자): 메타데이터} 로 바꿉니다."""
+    reader = csv.reader(io.StringIO(text.lstrip("\ufeff")))
+    rows = list(reader)
+    if not rows:
+        return {}
+    keys = [SHEET_COLUMNS.get(h.strip().lower().replace(" ", "")) for h in rows[0]]
+    if "file" not in keys:
+        log.warning("스프레드시트 첫 줄에 '파일' 열이 없어 무시합니다. (첫 줄: %s)", rows[0])
+        return {}
+    out = {}
+    for row in rows[1:]:
+        meta = {k: v.strip() for k, v in zip(keys, row) if k and v and v.strip()}
+        name = meta.pop("file", "")
+        if name and meta:
+            out[name.lower()] = meta
+    return out
+
+
+def sheet_meta_for(rows: dict[str, dict], video_name: str) -> dict | None:
+    return rows.get(video_name.lower()) or rows.get(Path(video_name).stem.lower())
+
+
+def plan_drive_batch(files: list[dict], max_videos: int) -> list[tuple[dict, list[dict]]]:
+    """Drive 파일 목록에서 업로드할 영상과 같은 이름의 짝 파일(.json, 썸네일)을 고릅니다."""
+    usable = [f for f in files if not f.get("mimeType", "").startswith("application/vnd.google-apps.")]
+    by_stem: dict[str, list[dict]] = {}
+    for f in usable:
+        by_stem.setdefault(Path(f["name"]).stem, []).append(f)
+
+    batch, seen = [], set()
+    for f in sorted(usable, key=lambda x: x["name"]):
+        name = f["name"]
+        if Path(name).suffix.lower() not in VIDEO_EXTS:
+            continue
+        if name in seen:
+            log.warning("Drive에 같은 이름의 영상이 여러 개 있어 하나만 처리합니다: %s", name)
+            continue
+        seen.add(name)
+        companions = [c for c in by_stem[Path(name).stem]
+                      if c is not f and Path(c["name"]).suffix.lower() in {".json", *THUMB_EXTS}]
+        batch.append((f, companions))
+        if len(batch) >= max_videos:
+            break
+    return batch
+
+
+def drive_list(drive, parent_id: str) -> list[dict]:
+    files, token = [], None
+    while True:
+        resp = drive.files().list(
+            q=f"'{parent_id}' in parents and trashed = false",
+            fields="nextPageToken, files(id, name, mimeType, size)",
+            pageSize=1000, pageToken=token,
+            supportsAllDrives=True, includeItemsFromAllDrives=True,
+        ).execute(num_retries=3)
+        files.extend(resp.get("files", []))
+        token = resp.get("nextPageToken")
+        if not token:
+            return files
+
+
+def drive_download(drive, file_id: str, dest: Path) -> None:
+    from googleapiclient.http import MediaIoBaseDownload
+
+    with open(dest, "wb") as fh:
+        req = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
+        dl = MediaIoBaseDownload(fh, req, chunksize=32 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = dl.next_chunk(num_retries=5)
+
+
+def drive_export_csv(drive, file_id: str) -> str:
+    data = drive.files().export(fileId=file_id, mimeType="text/csv").execute(num_retries=3)
+    return data.decode("utf-8") if isinstance(data, bytes) else data
+
+
+def load_drive_sheets(drive, files: list[dict]) -> dict[str, dict]:
+    rows: dict[str, dict] = {}
+    for f in sorted((f for f in files if f.get("mimeType") == SHEET_MIME), key=lambda x: x["name"]):
+        try:
+            found = parse_sheet_csv(drive_export_csv(drive, f["id"]))
+        except Exception:  # noqa: BLE001
+            log.exception("스프레드시트 %s 을(를) 읽지 못했습니다.", f["name"])
+            continue
+        log.info("스프레드시트 '%s' 에서 %d개 행을 읽었습니다.", f["name"], len(found))
+        for k, v in found.items():
+            rows.setdefault(k, v)
+    return rows
+
+
+def drive_move(drive, file_id: str, src_parent: str, dst_parent: str) -> None:
+    drive.files().update(fileId=file_id, addParents=dst_parent, removeParents=src_parent,
+                         fields="id", supportsAllDrives=True).execute(num_retries=3)
+
+
+def drive_put(drive, path: Path, parent_id: str) -> None:
+    from googleapiclient.http import MediaFileUpload
+
+    drive.files().create(body={"name": path.name, "parents": [parent_id]},
+                         media_body=MediaFileUpload(str(path), mimetype="application/json"),
+                         fields="id", supportsAllDrives=True).execute(num_retries=3)
+
+
+def run_drive(cfg: Config, upload_fn: UploadFn, drive, inbox_id: str, uploaded_id: str, failed_id: str,
+              max_videos: int) -> dict:
+    files = drive_list(drive, inbox_id)
+    batch = plan_drive_batch(files, max_videos)
+    if not batch:
+        log.info("Drive 업로드 폴더에 새 영상이 없습니다.")
+        return {"uploaded": 0, "failed": 0, "checked": 0, "deferred": 0}
+
+    with tempfile.TemporaryDirectory(prefix="yt-") as tmp:
+        work = Path(tmp)
+        local = replace(cfg, watch_dir=work / "inbox", uploaded_dir=work / "uploaded", failed_dir=work / "failed")
+        for d in (local.watch_dir, local.uploaded_dir, local.failed_dir):
+            d.mkdir()
+
+        drive_files: dict[str, list[dict]] = {}
+        for video, companions in batch:
+            for f in [video, *companions]:
+                size = int(f.get("size") or 0)
+                log.info("Drive에서 내려받는 중: %s (%.1f MB)", f["name"], size / 1e6)
+                drive_download(drive, f["id"], local.watch_dir / f["name"])
+            drive_files[video["name"]] = [video, *companions]
+
+        # 스프레드시트에 적힌 정보를 .json 으로 만듭니다 (Drive에 .json 이 있으면 그쪽이 우선).
+        sheet_rows = load_drive_sheets(drive, files)
+        for video, _ in batch:
+            row = sheet_meta_for(sheet_rows, video["name"])
+            if row:
+                side = sidecar_path(local.watch_dir / video["name"])
+                if side.exists():
+                    try:
+                        row = {**row, **json.loads(side.read_text(encoding="utf-8"))}
+                    except json.JSONDecodeError:
+                        continue  # 잘못된 .json 은 그대로 두어 오류로 보고되게 합니다
+                side.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
+
+        def on_result(video: Path, status: str, record: Path) -> None:
+            target = uploaded_id if status == "uploaded" else failed_id
+            for f in drive_files.get(video.name, []):
+                try:
+                    drive_move(drive, f["id"], inbox_id, target)
+                except Exception:  # noqa: BLE001
+                    # 업로드는 끝났는데 옮기지 못하면 다음 실행 때 중복 업로드될 수 있으니 크게 알립니다.
+                    log.exception("!! Drive에서 %s 을(를) 옮기지 못했습니다. 중복 업로드를 막으려면 직접 옮겨 주세요.", f["name"])
+            try:
+                drive_put(drive, record, target)
+            except Exception:  # noqa: BLE001
+                log.exception("Drive에 기록 파일 %s 을(를) 올리지 못했습니다.", record.name)
+
+        return run_once(local, upload_fn, stable_seconds=0, on_result=on_result)
+
+
 # ---------------------------------------------------------------- CLI
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="감시 폴더의 영상을 YouTube에 자동 업로드합니다.")
-    ap.add_argument("command", choices=["auth", "check", "once", "watch"])
+    ap.add_argument("command", choices=["auth", "check", "once", "watch", "drive"])
     ap.add_argument("-c", "--config", type=Path, default=Path("config.json"), help="설정 파일 (기본: config.json)")
     ap.add_argument("--no-browser", action="store_true", help="인증 시 브라우저를 자동으로 열지 않음")
     ap.add_argument("--log-file", type=Path, help="로그를 파일에도 기록")
     ap.add_argument("-v", "--verbose", action="store_true")
+    drv = ap.add_argument_group("drive 모드 (기본값은 환경 변수)")
+    drv.add_argument("--inbox", default=os.environ.get("DRIVE_INBOX_FOLDER", ""), help="업로드할 영상을 넣는 Drive 폴더 링크/ID")
+    drv.add_argument("--uploaded", default=os.environ.get("DRIVE_UPLOADED_FOLDER", ""), help="완료된 영상을 옮길 Drive 폴더")
+    drv.add_argument("--failed", default=os.environ.get("DRIVE_FAILED_FOLDER", ""), help="실패한 영상을 옮길 Drive 폴더")
+    drv.add_argument("--max", type=int, default=int(os.environ.get("MAX_VIDEOS_PER_RUN") or 3),
+                     help="한 번 실행할 때 올릴 최대 영상 수 (기본 3)")
     args = ap.parse_args(argv)
 
     handlers: list[logging.Handler] = [logging.StreamHandler()]
@@ -457,20 +703,35 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(message)s", handlers=handlers)
 
     cfg = load_config(args.config)
-    for d in (cfg.watch_dir, cfg.uploaded_dir, cfg.failed_dir):
-        d.mkdir(parents=True, exist_ok=True)
+    if args.command != "drive":
+        for d in (cfg.watch_dir, cfg.uploaded_dir, cfg.failed_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
     if args.command == "check":
         stats = run_once(cfg, None, dry_run=True)
         log.info("검사 완료: 정상 %d개, 오류 %d개", stats["checked"], stats["failed"])
         return 1 if stats["failed"] else 0
 
-    youtube = get_service(cfg, open_browser=not args.no_browser)
+    if args.command == "drive":
+        folders = {k: folder_id(getattr(args, k)) for k in ("inbox", "uploaded", "failed")}
+        missing = [k for k, v in folders.items() if not v]
+        if missing:
+            raise SystemExit("Drive 폴더가 지정되지 않았습니다: " + ", ".join(f"--{k}" for k in missing))
+        if len(set(folders.values())) != 3:
+            raise SystemExit("inbox, uploaded, failed 는 서로 다른 Drive 폴더여야 합니다.")
+        creds = get_credentials(cfg, SCOPES + [DRIVE_SCOPE], open_browser=not args.no_browser)
+        upload_fn = make_youtube_uploader(build_service("youtube", "v3", creds))
+        stats = run_drive(cfg, upload_fn, build_service("drive", "v3", creds),
+                          folders["inbox"], folders["uploaded"], folders["failed"], max(1, args.max))
+        log.info("완료: 업로드 %d, 실패 %d, 보류 %d", stats["uploaded"], stats["failed"], stats["deferred"])
+        return 1 if stats["failed"] else 0
+
+    creds = get_credentials(cfg, SCOPES, open_browser=not args.no_browser)
     if args.command == "auth":
         log.info("인증 완료. 토큰을 %s 에 저장했습니다.", cfg.token_file)
         return 0
 
-    upload_fn = make_youtube_uploader(youtube)
+    upload_fn = make_youtube_uploader(build_service("youtube", "v3", creds))
     if args.command == "once":
         stats = run_once(cfg, upload_fn)
         log.info("완료: 업로드 %d, 실패 %d, 보류 %d", stats["uploaded"], stats["failed"], stats["deferred"])

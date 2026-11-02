@@ -1,0 +1,62 @@
+# Google Drive 폴더에 올린 영상을 매시간 YouTube에 업로드합니다.
+# 설정 방법: youtube-uploader/README.md 의 "iPad만으로 쓰기" 참고
+name: YouTube 자동 업로드
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # 매시간 23분 (UTC 기준이지만 매시간이라 상관없음)
+  workflow_dispatch:        # GitHub 앱/웹에서 "Run workflow"로 바로 실행
+    inputs:
+      max_videos:
+        description: "이번에 올릴 최대 영상 수"
+        required: false
+        default: "3"
+
+# 두 실행이 겹쳐 같은 영상을 두 번 올리는 일을 막습니다.
+concurrency:
+  group: youtube-upload
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TZ: Asia/Seoul        # publishAt 에 시간대가 없을 때 이 시간대로 해석
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      DRIVE_INBOX_FOLDER: ${{ secrets.DRIVE_INBOX_FOLDER }}
+      DRIVE_UPLOADED_FOLDER: ${{ secrets.DRIVE_UPLOADED_FOLDER }}
+      DRIVE_FAILED_FOLDER: ${{ secrets.DRIVE_FAILED_FOLDER }}
+      MAX_VIDEOS_PER_RUN: ${{ inputs.max_videos || vars.MAX_VIDEOS_PER_RUN || '3' }}
+    steps:
+      - name: 설정 확인
+        id: cfg
+        run: |
+          if [ -z "$YT_REFRESH_TOKEN" ] || [ -z "$DRIVE_INBOX_FOLDER" ]; then
+            echo "::notice::Secrets가 아직 설정되지 않아 건너뜁니다. youtube-uploader/README.md 를 참고하세요."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.skip != 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: youtube-uploader/requirements.txt
+
+      - name: 의존성 설치
+        if: steps.cfg.outputs.skip != 'true'
+        run: pip install -r youtube-uploader/requirements.txt
+
+      - name: Drive → YouTube 업로드
+        if: steps.cfg.outputs.skip != 'true'
+        working-directory: youtube-uploader
+        run: python uploader.py drive
