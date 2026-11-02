@@ -1,0 +1,12 @@
+# 비밀 정보 - 절대 커밋하지 마세요
+client_secret*.json
+token.json
+config.json
+
+# 작업 폴더
+inbox/
+uploaded/
+failed/
+*.log
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,12 @@
+{
+  "title": "나의 첫 자동 업로드 영상",
+  "description": "uploader.py로 자동 업로드한 영상입니다.\n#자동화",
+  "tags": ["자동화", "python", "youtube api"],
+  "categoryId": "22",
+  "privacyStatus": "private",
+  "publishAt": "2026-11-10 18:00",
+  "thumbnail": "my-video.jpg",
+  "playlistId": "",
+  "madeForKids": false,
+  "notifySubscribers": true
+}

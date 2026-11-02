@@ -1,0 +1,16 @@
+{
+  "watch_dir": "inbox",
+  "uploaded_dir": "uploaded",
+  "failed_dir": "failed",
+  "client_secrets": "client_secret.json",
+  "token_file": "token.json",
+  "poll_seconds": 30,
+  "stable_seconds": 10,
+  "defaults": {
+    "description": "",
+    "tags": [],
+    "categoryId": "22",
+    "privacyStatus": "private",
+    "madeForKids": false
+  }
+}
