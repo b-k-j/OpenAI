@@ -5,23 +5,92 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube 자동 업로더</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-         max-width: 720px; margin: 0 auto; padding: 32px 16px; line-height: 1.7; }
-  h1 { font-size: 1.6rem; }
-  a { color: #2563eb; }
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #57606a; --line: #d0d7de;
+    --card: #f6f8fa; --link: #2563eb; --yt: #cc0000;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b3; --line: #30363d;
+      --card: #161b22; --link: #58a6ff; --yt: #ff4e45;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b3; --line: #30363d;
+    --card: #161b22; --link: #58a6ff; --yt: #ff4e45;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.7;
+         font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+  header { border-bottom: 1px solid var(--line); }
+  header .wrap { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+                 justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
+  .brand { font-weight: 700; font-size: 1.05rem; }
+  .brand .yt { color: var(--yt); }
+  nav a { margin-left: 14px; }
+  nav a:first-child { margin-left: 0; }
+  a { color: var(--link); }
+  h1 { font-size: 1.7rem; line-height: 1.35; margin: 32px 0 8px; }
+  h2 { font-size: 1.15rem; margin-top: 2em; }
+  .yt-note { border: 1px solid var(--line); border-left: 4px solid var(--yt); background: var(--card);
+             border-radius: 8px; padding: 12px 16px; margin: 20px 0; }
+  .yt-note strong { color: var(--yt); }
+  ol li { margin-bottom: 6px; }
+  .muted { color: var(--muted); }
+  footer { border-top: 1px solid var(--line); margin-top: 48px; }
+  footer .wrap { padding-top: 16px; padding-bottom: 32px; font-size: .92rem; }
+  footer a { margin-right: 14px; }
 </style>
 </head>
 <body>
-<h1>YouTube 자동 업로더</h1>
-<p>개인이 자신의 YouTube 채널에 영상을 자동으로 업로드하기 위해 만든 도구입니다.
-본인의 Google Drive 폴더에 올려 둔 영상을 가져와 본인 채널에 업로드하며, 다른 사람에게 서비스로 제공하지 않습니다.</p>
-<p>A personal tool that uploads videos from the owner's own Google Drive folder to the owner's own YouTube channel.
-It is not offered as a service to anyone else.</p>
-<ul>
-  <li><a href="privacy.html">개인정보처리방침 / Privacy Policy</a></li>
-  <li><a href="terms.html">서비스 약관 / Terms of Service</a></li>
-  <li><a href="https://github.com/b-k-j/OpenAI/tree/main/youtube-uploader">소스 코드 / Source code</a></li>
-</ul>
+<header>
+  <div class="wrap">
+    <div class="brand"><span class="yt">YouTube</span> 자동 업로더</div>
+    <nav>
+      <a href="privacy.html">개인정보처리방침</a>
+      <a href="terms.html">서비스 약관</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1><span style="color:var(--yt)">YouTube</span> 자동 업로더</h1>
+  <p>본인의 Google Drive 폴더에 올려 둔 영상을 <strong>본인 YouTube 채널</strong>에 자동으로 업로드하는 1인 전용 도구입니다.
+  다른 사람에게 서비스로 제공하지 않습니다.</p>
+
+  <div class="yt-note">
+    이 앱은 <strong>YouTube API 서비스</strong>를 사용합니다.
+    앱을 사용하면 <a href="https://www.youtube.com/t/terms">YouTube 서비스 약관</a>에 동의하는 것으로 보며,
+    YouTube API 서비스로 처리되는 정보에는 <a href="https://policies.google.com/privacy">Google 개인정보처리방침</a>이 적용됩니다.
+    이 앱이 데이터를 다루는 방법은 <a href="privacy.html">개인정보처리방침</a>에 있습니다.
+  </div>
+
+  <h2>동작 방식</h2>
+  <ol>
+    <li>채널 주인이 Google 계정으로 로그인해 앱에 YouTube 업로드와 Google Drive 접근 권한을 허용합니다 (OAuth 2.0).</li>
+    <li>iPad 사진 앱에서 영상을 지정한 Google Drive 폴더에 올리고, 같은 폴더의 스프레드시트에 제목·설명·태그·예약 공개 시간을 적습니다.</li>
+    <li>GitHub Actions가 1시간마다 폴더를 확인해 새 영상을 YouTube Data API(<code>videos.insert</code>)로 업로드합니다.
+        썸네일(<code>thumbnails.set</code>)과 재생목록(<code>playlistItems.insert</code>)도 함께 설정합니다.</li>
+    <li>업로드가 끝나면 영상을 완료 폴더로 옮기고 YouTube 영상 주소를 기록합니다.</li>
+  </ol>
+
+  <h2>권한 철회</h2>
+  <p><a href="https://security.google.com/settings/security/permissions">Google 보안 설정 → 서드 파티 액세스</a>에서 언제든 이 앱의 권한을 삭제할 수 있습니다.</p>
+
+  <hr>
+  <p class="muted">YouTube Auto Uploader is a personal, single-user tool that uploads the owner's videos from a Google Drive folder
+  to the owner's own YouTube channel. This app uses <strong>YouTube API Services</strong>; by using it you agree to the
+  <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>. See our <a href="privacy.html">Privacy Policy</a>
+  and the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="privacy.html">개인정보처리방침 / Privacy Policy</a>
+    <a href="terms.html">서비스 약관 / Terms of Service</a>
+    <a href="https://github.com/b-k-j/OpenAI/tree/main/youtube-uploader">소스 코드</a>
+  </div>
+</footer>
 </body>
 </html>
